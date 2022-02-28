@@ -19,7 +19,21 @@ class Allocator;
 class PhotonicRouter : public Router{
   tRoutingFunction   _rf;
 
-  vector<int> input_map; //Current mapping from inputs to outputs
+  enum inputState {
+    idle,       // Not connected
+    waiting,    // Waiting for full path to be established
+    connected   // Full path established
+  };
+
+  enum outputState {
+    idle,
+    busy
+  };
+
+  vector<int> _input_map; //Current mapping from inputs to outputs
+
+  vector<inputState> _input_state; //Status of input channels
+  vector<outputState> _output_state; //Status of output channels
 
   virtual void _InternalStep( );
 
