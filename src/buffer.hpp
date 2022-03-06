@@ -41,14 +41,15 @@ class Buffer : public Module {
   int _occupancy;
   int _size;
 
-  vector<VC*> _vc;
+  
 
 #ifdef TRACK_BUFFERS
   vector<int> _class_occupancy;
 #endif
 
 public:
-  
+  vector<VC*> _vc;
+
   Buffer( const Configuration& config, int outputs,
 	  Module *parent, const string& name );
   ~Buffer();

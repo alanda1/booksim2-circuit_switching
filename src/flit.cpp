@@ -80,6 +80,8 @@ void Flit::Reset()
   intm =-1;
   ph = -1;
   data = 0;
+  circuit_request_generated = false;
+  circuit_ack_recieved = false;
 }  
 
 Flit * Flit::New() {

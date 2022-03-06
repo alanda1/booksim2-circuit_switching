@@ -62,7 +62,7 @@ TrafficManager::TrafficManager( const Configuration &config, const vector<Networ
     _nodes = _net[0]->NumNodes( );
     _routers = _net[0]->NumRouters( );
 
-    _vcs = config.GetInt("num_vcs");
+    _vcs = config.GetInt("num_injection_vcs");
     _subnets = config.GetInt("subnets");
  
     _subnet.resize(Flit::NUM_FLIT_TYPES);
@@ -103,8 +103,10 @@ TrafficManager::TrafficManager( const Configuration &config, const vector<Networ
         Error("Invalid routing function: " + rf);
     }
     _rf = rf_iter->second;
-  
     _lookahead_routing = !config.GetInt("routing_delay");
+    if(_lookahead_routing){
+        Error("Using lookahead routing");
+    }
     _noq = config.GetInt("noq");
     if(_noq) {
         if(!_lookahead_routing) {
@@ -642,6 +644,9 @@ TrafficManager::~TrafficManager( )
 
 void TrafficManager::_RetireFlit( Flit *f, int dest )
 {
+    if(f->vc > _vcs-1){
+        return;
+    }
     _deadlock_timer = 0;
 
     assert(_total_in_flight_flits[f->cl].count(f->id) > 0);

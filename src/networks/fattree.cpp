@@ -53,7 +53,7 @@
 #include "misc_utils.hpp"
 
 
- //#define FATTREE_DEBUG
+#define FATTREE_DEBUG
 
 FatTree::FatTree( const Configuration& config,const string & name )
   : Network( config ,name)

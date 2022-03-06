@@ -50,6 +50,8 @@ class BufferMonitor;
 
 class PhotonicRouterCredits : public Router {
 
+
+
   int _vcs;
 
   bool _vc_busy_when_full;
@@ -66,7 +68,10 @@ class PhotonicRouterCredits : public Router {
   int _routing_delay;
   int _vc_alloc_delay;
   int _sw_alloc_delay;
-  
+
+  bool _lowest_level;
+  vector<int> _input_map; //Current input mappings
+
   map<int, Flit *> _in_queue_flits;
 
   deque<pair<int, pair<Credit *, int> > > _proc_credits;
@@ -138,6 +143,8 @@ class PhotonicRouterCredits : public Router {
   void _SendCredits( );
   
   void _UpdateNOQ(int input, int vc, Flit const * f);
+
+  bool _LowestLevelRouter( );
 
   // ----------------------------------------
   //

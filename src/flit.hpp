@@ -38,12 +38,15 @@ class Flit {
 
 public:
 
-  const static int NUM_FLIT_TYPES = 5;
-  enum FlitType { READ_REQUEST  = 0, 
+  const static int NUM_FLIT_TYPES = 7;
+  enum FlitType { 
+      READ_REQUEST  = 0, 
 		  READ_REPLY    = 1,
 		  WRITE_REQUEST = 2,
 		  WRITE_REPLY   = 3,
-                  ANY_TYPE      = 4 };
+      ANY_TYPE      = 4,
+      CIRCUT_REQUEST= 5,
+      CIRCUIT_ACK   = 6 };
   FlitType type;
 
   int vc;
@@ -53,6 +56,9 @@ public:
   bool head;
   bool tail;
   
+  bool circuit_request_generated;
+  bool circuit_ack_recieved;
+
   int  ctime;
   int  itime;
   int  atime;

@@ -37,8 +37,13 @@
 
 class VC : public Module {
 public:
-  enum eVCState { state_min = 0, idle = state_min, routing, vc_alloc, active, 
-		  state_max = active };
+  enum eVCState { 
+    state_min = 0, 
+    idle = state_min, 
+    routing, 
+    vc_alloc, 
+    active, 
+		state_max = active };
   struct state_info_t {
     int cycles;
   };
@@ -50,7 +55,7 @@ private:
   
   eVCState _state;
   
-  OutputSet *_route_set;
+  
   int _out_port, _out_vc;
 
   enum ePrioType { local_age_based, queue_length_based, hop_count_based, none, other };
@@ -71,7 +76,7 @@ private:
   bool _lookahead_routing;
 
 public:
-  
+  OutputSet *_route_set;
   VC( const Configuration& config, int outputs,
       Module *parent, const string& name );
   ~VC();
