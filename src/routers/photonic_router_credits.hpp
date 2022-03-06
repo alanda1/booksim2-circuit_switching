@@ -25,8 +25,8 @@
  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifndef _IQ_ROUTER_HPP_
-#define _IQ_ROUTER_HPP_
+#ifndef _PHOTONIC_ROUTER_CREDITS_HPP_
+#define _PHOTONIC_ROUTER_CREDITS_HPP_
 
 #include <string>
 #include <deque>
