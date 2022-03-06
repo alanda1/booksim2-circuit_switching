@@ -48,6 +48,7 @@
 #include "event_router.hpp"
 #include "chaos_router.hpp"
 #include "photonic_router.hpp"
+#include "photonic_router_credits.hpp"
 ///////////////////////////////////////////////////////
 
 int const Router::STALL_BUFFER_BUSY = -2;
@@ -141,6 +142,8 @@ Router *Router::NewRouter( const Configuration& config,
     r = new ChaosRouter( config, parent, name, id, inputs, outputs );
   } else if ( type == "photonic" ) {
     r = new PhotonicRouter( config, parent, name, id, inputs, outputs );
+  } else if ( type == "photonic_credits" ) {
+    r = new PhotonicRouterCredits( config, parent, name, id, inputs, outputs );
   } else {
     cerr << "Unknown router type: " << type << endl;
   }
