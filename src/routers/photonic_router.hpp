@@ -17,6 +17,12 @@ class Flit;
 class Allocator;
 
 class PhotonicRouter : public Router{
+
+  //Maps channel name to the channel's input
+  static map<string, PhotonicRouter*> _input_router_map; 
+  //Maps channel name to the channel's output
+  static map<string, PhotonicRouter*> _output_router_map;
+
   tRoutingFunction   _rf;
 
   enum inputState {
@@ -26,7 +32,7 @@ class PhotonicRouter : public Router{
   };
 
   enum outputState {
-    idle,
+    free,
     busy
   };
 
@@ -47,7 +53,11 @@ class PhotonicRouter : public Router{
 
   virtual void ReadInputs( );
   virtual void WriteOutputs( );
-  
+
+  virtual void AddInputChannel( FlitChannel *channel, CreditChannel *backchannel );
+  virtual void AddOutputChannel( FlitChannel *channel, CreditChannel *backchannel );
+
+
   void Display( ostream & os = cout ) const;
 
   virtual int GetUsedCredit(int out) const {return 0;}
@@ -57,7 +67,9 @@ class PhotonicRouter : public Router{
   virtual int GetUsedCreditForClass(int output, int cl) const;
   virtual int GetBufferOccupancyForClass(int input, int cl) const;
 #endif
-
+    virtual vector<int> UsedCredits() const { return vector<int>(); }
+  virtual vector<int> FreeCredits() const { return vector<int>(); }
+  virtual vector<int> MaxCredits() const { return vector<int>(); }
 };
 
 #endif
