@@ -70,7 +70,11 @@ class PhotonicRouterCredits : public Router {
   int _sw_alloc_delay;
 
   bool _lowest_level;
+  static int _cur_control_flit_id;
   vector<int> _input_map; //Current input mappings
+  vector<bool> _input_ready; //True if input i is connected
+  vector<bool> _request_sent; //True if input i has sent a request
+  vector<int> _input_mapped_id; //Value of the id of the header packet that is assigned
 
   map<int, Flit *> _in_queue_flits;
 
@@ -80,6 +84,9 @@ class PhotonicRouterCredits : public Router {
   deque<pair<int, pair<pair<int, int>, int> > > _vc_alloc_vcs;  
   deque<pair<int, pair<pair<int, int>, int> > > _sw_hold_vcs;
   deque<pair<int, pair<pair<int, int>, int> > > _sw_alloc_vcs;
+
+
+  vector<queue<Flit *> > _flits_to_send;
 
   deque<pair<int, pair<Flit *, pair<int, int> > > > _crossbar_flits;
 
@@ -144,7 +151,11 @@ class PhotonicRouterCredits : public Router {
   
   void _UpdateNOQ(int input, int vc, Flit const * f);
 
-  bool _LowestLevelRouter( );
+  void _SendData( );
+
+  bool _FinalRouter(Flit const * f);
+  bool _InitialRouter(Flit const *f);
+
 
   // ----------------------------------------
   //

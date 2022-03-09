@@ -47,6 +47,9 @@
 #include "routefunc.hpp"
 #include "switch_monitor.hpp"
 #include "vc.hpp"
+
+int PhotonicRouterCredits::_cur_control_flit_id = 0;
+
 PhotonicRouterCredits::PhotonicRouterCredits(Configuration const &config, Module *parent,
                                              string const &name, int id, int inputs, int outputs)
     : Router(config, parent, name, id, inputs, outputs), _active(false) {
@@ -81,6 +84,21 @@ PhotonicRouterCredits::PhotonicRouterCredits(Configuration const &config, Module
     _input_map[i] = -1;
   }
 
+  // Input state
+  _input_ready.resize(_inputs);
+  for (int i = 0; i < _inputs; ++i) {
+    _input_ready[i] = false;
+  }
+
+  // Request status
+  _request_sent.resize(_inputs);
+  for (int i = 0; i < _inputs; ++i) {
+    _request_sent[i] = false;
+  }
+
+  // 1st level data queueing
+  _flits_to_send.resize(_inputs);
+  _input_mapped_id.resize(_inputs);
   // Routing
   string const rf = config.GetStr("routing_function") + "_" + config.GetStr("topology");
   map<string, tRoutingFunction>::const_iterator rf_iter = gRoutingFunctionMap.find(rf);
@@ -183,6 +201,7 @@ PhotonicRouterCredits::PhotonicRouterCredits(Configuration const &config, Module
   int routers_per_level = powi(gK, gN - 1);
   int router_depth = id / routers_per_level;  // which level
   _lowest_level = (router_depth == (gN - 1));
+  cout << FullName() << " Lowest_level " << _lowest_level << endl;
 
 #ifdef TRACK_FLOWS
   for (int c = 0; c < _classes; ++c) {
@@ -240,6 +259,11 @@ void PhotonicRouterCredits::_InternalStep() {
   _InputQueuing();
   bool activity = !_proc_credits.empty();
 
+  if (!_flits_to_send.empty()) {
+    _SendData();
+    activity = activity || !_flits_to_send.empty();
+  }
+
   if (!_route_vcs.empty())
     _RouteEvaluate();
   if (_vc_allocator) {
@@ -281,6 +305,7 @@ void PhotonicRouterCredits::_InternalStep() {
     _SwitchUpdate();
     activity = activity || !_crossbar_flits.empty();
   }
+  
 
   _active = activity;
 
@@ -328,6 +353,7 @@ bool PhotonicRouterCredits::_ReceiveCredits() {
     if (c) {
       _proc_credits.push_back(make_pair(GetSimTime() + _credit_delay,
                                         make_pair(c, output)));
+      cout << "Credits recieved from output " << output << " in router " << FullName() << endl;
       activity = true;
     }
   }
@@ -351,42 +377,43 @@ void PhotonicRouterCredits::_InputQueuing() {
     int const vc = f->vc;
     assert((vc >= 0) && (vc < _vcs));
 
-    Buffer *const cur_buf = _buf[input];
-
-    if (true) {
-      *gWatchOut << GetSimTime() << " | " << FullName() << " | "
-                 << "Adding flit " << f->id
-                 << " to VC " << vc
-                 << " at input " << input
-                 << " (state: " << VC::VCSTATE[cur_buf->GetState(vc)];
-      if (cur_buf->Empty(vc)) {
-        *gWatchOut << ", empty";
-      } else {
-        assert(cur_buf->FrontFlit(vc));
-        *gWatchOut << ", front: " << cur_buf->FrontFlit(vc)->id;
-      }
-      *gWatchOut << ")." << endl;
+    if (f->watch){
+      *gWatchOut << *f << endl;
     }
-    cur_buf->AddFlit(vc, f);
+    Buffer *const cur_buf = _buf[input];
+    if ((f->vc == 0 && _lowest_level) || f->vc == 1 || f->vc == 2) {
+      if (f->watch) {
+        *gWatchOut << GetSimTime() << " | " << FullName() << " | "
+                   << "Adding flit " << f->id
+                   << " to VC " << vc
+                   << " at input " << input
+                   << " (state: " << VC::VCSTATE[cur_buf->GetState(vc)];
+        if (cur_buf->Empty(vc)) {
+          *gWatchOut << ", empty";
+        } else {
+          assert(cur_buf->FrontFlit(vc));
+          *gWatchOut << ", front: " << cur_buf->FrontFlit(vc)->id;
+        }
+        *gWatchOut << ")." << endl;
+      }
+
+      cur_buf->AddFlit(vc, f);
 
 #ifdef TRACK_FLOWS
-    ++_stored_flits[f->cl][input];
-    if (f->head) ++_active_packets[f->cl][input];
+      ++_stored_flits[f->cl][input];
+      if (f->head) ++_active_packets[f->cl][input];
 #endif
 
-    _bufferMonitor->write(input, f);
+      _bufferMonitor->write(input, f);
+    }
 
-    if (cur_buf->GetState(vc) == VC::idle) {
-      assert(cur_buf->FrontFlit(vc) == f);
-      assert(cur_buf->GetOccupancy(vc) == 1);
-      assert(f->head);
-      assert(_switch_hold_vc[input * _input_speedup + vc % _input_speedup] != vc);
-      if (_routing_delay) {
-        if (_lowest_level) {
-          if (vc == 0) {
+    if (_lowest_level) {
+      switch (vc) {
+        case 0: {
+          if (f->head && input < gK) {  // Path not allocated yet
             // Create reservation packet
             cur_buf->SetState(vc, VC::routing);
-            if (!f->circuit_request_generated) {
+            if (true) {
               Flit *reserve_flit = Flit::New();
               if (reserve_flit == NULL) {
                 Error("Null reserve flit?");
@@ -395,84 +422,192 @@ void PhotonicRouterCredits::_InputQueuing() {
               reserve_flit->vc = 1;
               reserve_flit->pid = 0;
               reserve_flit->cl = 0;
+              reserve_flit->src = f->src;
               reserve_flit->dest = f->dest;
               reserve_flit->head = true;
               reserve_flit->tail = true;
-              reserve_flit->watch = true;
+              reserve_flit->watch = f->watch;
+              reserve_flit->id = f->id;
               cur_buf->AddFlit(1, reserve_flit);
               cur_buf->SetState(1, VC::routing);
               _route_vcs.push_back(make_pair(-1, make_pair(input, 1)));
-              cout << "created reserve flit from router " << FullName() << endl;
-              f->circuit_request_generated = true;
+              cout << "created reserve flit for id " << f->id << " from router " << _id << " " << FullName() << endl;
+              _request_sent[input] = true;
             }
-
-          } else if (vc == 1) {
-            // Create Ack packet
-            cout << "creating ack packet" << endl;
-            // cur_buf->SetState(vc, VC::routing);
-            Flit *ack_flit = Flit::New();
-            ack_flit->type = Flit::CIRCUIT_ACK;
-            ack_flit->vc = 2;
-            ack_flit->pid = 0;
-            ack_flit->cl = 0;
-            ack_flit->head = true;
-            ack_flit->tail = true;
-            cur_buf->AddFlit(2, ack_flit);
-            cur_buf->SetState(2, VC::routing);
-            //_route_vcs.push_back(make_pair(-1, make_pair(input, 1)));  // Last final hop
-            _route_vcs.push_back(make_pair(-1, make_pair(input, 2)));
-            _input_map[input] = f->dest;
-
-          } else if (vc == 2) {
-            // Ack received, don't forward it to the terminal
-            cur_buf->SetState(0, VC::routing);
-            int from_input = -1;
-            for (int i = 0; i < _inputs; i++) {
-              if (_input_map[i] == input) {
-                from_input = i;
-              }
-            }
-            assert(from_input != -1);
-            _route_vcs.push_back(make_pair(-1, make_pair(from_input, 0)));
-            cout << "final ack recieved" << endl;
-            cur_buf->RemoveFlit(2);
+            _flits_to_send[input].push(f);
+            cur_buf->RemoveFlit(0);
+          } else {  // Path allocated, send
+            _flits_to_send[input].push(f);
+            cur_buf->RemoveFlit(0);
           }
-        } else {
+        } break;
+        case 1: {
+          _route_vcs.push_back(make_pair(-1, make_pair(input, 1)));
           cur_buf->SetState(vc, VC::routing);
-          _route_vcs.push_back(make_pair(-1, make_pair(input, vc)));
-        }
-      } else {
-        if (f->watch) {
-          *gWatchOut << GetSimTime() << " | " << FullName() << " | "
-                     << "Using precomputed lookahead routing information for VC " << vc
-                     << " at input " << input
-                     << " (front: " << f->id
-                     << ")." << endl;
-        }
-        cur_buf->SetRouteSet(vc, &f->la_route_set);
-        cur_buf->SetState(vc, VC::vc_alloc);
-        if (_speculative) {
-          _sw_alloc_vcs.push_back(make_pair(-1, make_pair(make_pair(input, vc),
-                                                          -1)));
-        }
-        if (_vc_allocator) {
-          _vc_alloc_vcs.push_back(make_pair(-1, make_pair(make_pair(input, vc),
-                                                          -1)));
-        }
-        if (_noq) {
-          _UpdateNOQ(input, vc, f);
-        }
+        } break;
+        case 2: {
+          // Final ack recieved, ready to start sending
+          _input_ready[input] = true;
+          cout << GetSimTime() << " | " << FullName() << " | "
+               << "Final ack recieved output " << input << "for packet " << f->id << " " << endl;
+        } break;
+        default: {
+          assert(false);  // Unknown VC
+        } break;
       }
-    } else if ((cur_buf->GetState(vc) == VC::active) &&
-               (cur_buf->FrontFlit(vc) == f)) {  // Don't send acks or reqs to the terminals
-      if (_switch_hold_vc[input * _input_speedup + vc % _input_speedup] == vc) {
-        _sw_hold_vcs.push_back(make_pair(-1, make_pair(make_pair(input, vc),
-                                                       -1)));
-      } else {
-        _sw_alloc_vcs.push_back(make_pair(-1, make_pair(make_pair(input, vc),
-                                                        -1)));
+    } else {  // Not a bottom level router
+      switch (vc) {
+        case 0: {
+          int outport = _input_map[input];
+          assert(outport != -1);
+          assert(_input_ready[input]);
+          _output_channels[outport]->Send(f);
+
+          if (f->tail) {  // Remove path
+            _input_map[input] = -1;
+            _input_ready[input] = false;
+            cout << GetSimTime() << " | " << FullName() << " | "
+                 << " Cleared input " << input 
+                 << "header " << _input_mapped_id[input]
+                 << endl;
+            cout << "New status: [";
+            for (int i : _input_map) {
+              cout << i << " ";
+            }
+            cout << "]" << endl;
+          }
+        } break;
+        case 1: {
+          _route_vcs.push_back(make_pair(-1, make_pair(input, 1)));
+          cur_buf->SetState(vc, VC::routing);
+        } break;
+        case 2: {
+          _route_vcs.push_back(make_pair(-1, make_pair(input, 2)));
+          cur_buf->SetState(vc, VC::routing);
+        } break;
+        default:
+          break;
       }
     }
+    // if (cur_buf->GetState(vc) == VC::idle) {
+    //   assert(cur_buf->FrontFlit(vc) == f);
+    //   assert(cur_buf->GetOccupancy(vc) == 1);
+    //   assert(f->head);
+    //   assert(_switch_hold_vc[input * _input_speedup + vc % _input_speedup] != vc);
+    //   if (_routing_delay) {
+    //     if (_lowest_level) {
+    //       if (vc == 0) {
+    //         // Create reservation packet
+    //         cur_buf->SetState(vc, VC::routing);
+    //         if (!f->circuit_request_generated) {
+    //           Flit *reserve_flit = Flit::New();
+    //           if (reserve_flit == NULL) {
+    //             Error("Null reserve flit?");
+    //           }
+    //           reserve_flit->type = Flit::CIRCUT_REQUEST;
+    //           reserve_flit->vc = 1;
+    //           reserve_flit->pid = 0;
+    //           reserve_flit->cl = 0;
+    //           reserve_flit->src = f->src;
+    //           reserve_flit->dest = f->dest;
+    //           reserve_flit->head = true;
+    //           reserve_flit->tail = true;
+    //           reserve_flit->watch = f->watch;
+    //           reserve_flit->id = f->id;
+    //           cur_buf->AddFlit(1, reserve_flit);
+    //           cur_buf->SetState(1, VC::routing);
+    //           _route_vcs.push_back(make_pair(-1, make_pair(input, 1)));
+    //           cout << "created reserve flit for id " << f->id << " from router " << FullName() << endl;
+    //           f->circuit_request_generated = true;
+    //         }
+
+    //       } else if (vc == 1) {
+    //         // // Create Ack packet
+    //         // cout << "creating ack packet for id " << f->id << " at " << FullName() << endl;
+    //         // // cur_buf->SetState(vc, VC::routing);
+    //         // Flit *ack_flit = Flit::New();
+    //         // ack_flit->type = Flit::CIRCUIT_ACK;
+    //         // ack_flit->vc = 2;
+    //         // ack_flit->pid = 0;
+    //         // ack_flit->cl = 0;
+    //         // ack_flit->dest = f->src;
+    //         // ack_flit->head = true;
+    //         // ack_flit->tail = true;
+    //         // ack_flit->watch = f->watch;
+    //         // ack_flit->id = f->id;
+    //         // cur_buf->AddFlit(2, ack_flit);
+    //         // cur_buf->SetState(2, VC::routing);
+    //         // _route_vcs.push_back(make_pair(-1, make_pair(input, 2)));
+    //         _route_vcs.push_back(make_pair(-1, make_pair(input, 1)));  // Last final hop
+    //         cur_buf->SetState(vc, VC::routing);
+
+    //         // OutputSet final_port;
+    //         // _rf(this, f, input, &final_port, false);
+    //         // final_port.GetSet().begin()->output_port;
+    //         // _input_map[input] = final_port.GetSet().begin()->output_port;
+
+    //       } else if (vc == 2) {
+    //         // Ack received, don't forward it to the terminal
+    //         cur_buf->SetState(0, VC::routing);
+    //         int from_input = -1;
+    //         for (int i = 0; i < _inputs; i++) {
+    //           if (_input_map[i] == input) {
+    //             from_input = i;
+    //           }
+    //         }
+    //         if (from_input == -1) {
+    //           if (_lowest_level) {
+    //               //Wait for final hop to be routed
+    //           } else {
+    //             cout << "Input map not not set for output " << input << " router " << FullName() << endl;
+    //             for(int i: _input_map){
+    //               cout << i << " ";
+    //             }
+    //             cout << endl;
+    //           }
+
+    //           assert(from_input != -1);
+    //           _route_vcs.push_back(make_pair(-1, make_pair(from_input, 0)));
+    //           cout << "final ack recieved" << endl;
+    //           cur_buf->RemoveFlit(2);
+    //         }
+    //       }
+    //     } else {
+    //       cur_buf->SetState(vc, VC::routing);
+    //       _route_vcs.push_back(make_pair(-1, make_pair(input, vc)));
+    //     }
+    //   } else {
+    //     if (f->watch) {
+    //       *gWatchOut << GetSimTime() << " | " << FullName() << " | "
+    //                  << "Using precomputed lookahead routing information for VC " << vc
+    //                  << " at input " << input
+    //                  << " (front: " << f->id
+    //                  << ")." << endl;
+    //     }
+    //     cur_buf->SetRouteSet(vc, &f->la_route_set);
+    //     cur_buf->SetState(vc, VC::vc_alloc);
+    //     if (_speculative) {
+    //       _sw_alloc_vcs.push_back(make_pair(-1, make_pair(make_pair(input, vc),
+    //                                                       -1)));
+    //     }
+    //     if (_vc_allocator) {
+    //       _vc_alloc_vcs.push_back(make_pair(-1, make_pair(make_pair(input, vc),
+    //                                                       -1)));
+    //     }
+    //     if (_noq) {
+    //       _UpdateNOQ(input, vc, f);
+    //     }
+    //   }
+    // } else if ((cur_buf->GetState(vc) == VC::active) &&
+    //            (cur_buf->FrontFlit(vc) == f)) {  // Don't send acks or reqs to the terminals
+    //   if (_switch_hold_vc[input * _input_speedup + vc % _input_speedup] == vc) {
+    //     _sw_hold_vcs.push_back(make_pair(-1, make_pair(make_pair(input, vc),
+    //                                                    -1)));
+    //   } else {
+    //     _sw_alloc_vcs.push_back(make_pair(-1, make_pair(make_pair(input, vc),
+    //                                                     -1)));
+    //   }
+    // }
   }
   _in_queue_flits.clear();
 
@@ -584,19 +719,20 @@ void PhotonicRouterCredits::_RouteUpdate() {
                  << ")." << endl;
     }
     // This does the actual routing
-    if (vc == 0) {  // Data
+    if (vc == 0) {    // Data
+      assert(false);  // Should never need to route data flits
       cur_buf->_vc[vc]->_route_set->Clear();
       cur_buf->_vc[vc]->_route_set->AddRange(_input_map[input], 0, 0);
       cur_buf->SetState(vc, VC::vc_alloc);
     } else if (vc == 1) {  // Request
       cur_buf->Route(vc, _rf, this, f, input);
       cur_buf->SetState(vc, VC::vc_alloc);
-
+      _vc_alloc_vcs.push_back(make_pair(-1, make_pair(item.second, -1)));
     } else if (vc == 2) {
       cur_buf->_vc[vc]->_route_set->Clear();
       int outport = -1;
       if (_lowest_level) {
-        outport = input;
+        assert(false);  // Never should have to route an ack in a lowest level router
       } else {
         for (int i = 0; i < _inputs; i++) {
           if (_input_map[i] == input) {
@@ -604,17 +740,19 @@ void PhotonicRouterCredits::_RouteUpdate() {
           }
         }
       }
+      if (outport == -1) {
+        cout << "Path not found to route ack: from input " << input << endl;
+        cout << "Lowest level " << _lowest_level << endl;
+        cout << FullName() << endl;
+        cout << "New status: [";
+        for (int i : _input_map) {
+          cout << i << " ";
+        }
+        cout << "]" << endl;
+      }
       assert(outport != -1);
-      cur_buf->_vc[vc]->_route_set->AddRange(outport, 2, 2);
-      cur_buf->SetState(vc, VC::vc_alloc);
+      _output_buffer[outport].push(f);  // Can just send to output without VC or switch
     }
-    if (_speculative) {
-      _sw_alloc_vcs.push_back(make_pair(-1, make_pair(item.second, -1)));
-    }
-    if (_vc_allocator) {
-      _vc_alloc_vcs.push_back(make_pair(-1, make_pair(item.second, -1)));
-    }
-    // NOTE: No need to handle NOQ here, as it requires lookahead routing!
     _route_vcs.pop_front();
   }
 }
@@ -645,9 +783,9 @@ void PhotonicRouterCredits::_VCAllocEvaluate() {
 
     Buffer const *const cur_buf = _buf[input];
     assert(!cur_buf->Empty(vc));
-    assert(cur_buf->GetState(vc) == VC::vc_alloc);
+    // assert(cur_buf->GetState(vc) == VC::vc_alloc);
 
-    Flit const *const f = cur_buf->FrontFlit(vc);
+    Flit *f = cur_buf->FrontFlit(vc);
     assert(f);
     assert(f->vc == vc);
     assert(f->head);
@@ -675,7 +813,8 @@ void PhotonicRouterCredits::_VCAllocEvaluate() {
     for (set<OutputSet::sSetElement>::const_iterator iset = setlist.begin();
          iset != setlist.end();
          ++iset) {
-      int const out_port = iset->output_port;
+      int out_port = iset->output_port;
+
       assert((out_port >= 0) && (out_port < _outputs));
 
       BufferState const *const dest_buf = _next_buf[out_port];
@@ -711,17 +850,19 @@ void PhotonicRouterCredits::_VCAllocEvaluate() {
         // actual packet priorities, which is reflected in "out_priority".
 
         if (!dest_buf->IsAvailableFor(out_vc) ||
-            (_input_map[input] == -1 && f->vc == 0) ||
             (_input_map[input] != -1 && f->vc == 1)) {
           if (f->watch) {
-            int const use_input_and_vc = dest_buf->UsedBy(out_vc);
-            int const use_input = use_input_and_vc / _vcs;
-            int const use_vc = use_input_and_vc % _vcs;
+            //int const use_input_and_vc = dest_buf->UsedBy(out_vc);
+            // int const use_input = use_input_and_vc / _vcs;
+            // int const use_vc = use_input_and_vc % _vcs;
             *gWatchOut << GetSimTime() << " | " << FullName() << " | "
-                       << "  VC " << out_vc
-                       << " at output " << out_port
-                       << " is in use by VC " << use_vc
-                       << " at input " << use_input;
+                       << "input " << input
+                       << "output " << out_port
+                       << " is in use:" << endl;
+
+            for (int i = 0; i < _inputs; i++) {
+              cout << _input_map[i] << " ";
+            }
             // Flit *cf = _buf[use_input]->FrontFlit(use_vc);
             // if (cf) {
             //   *gWatchOut << " (front flit: " << cf->id << ")";
@@ -796,11 +937,11 @@ void PhotonicRouterCredits::_VCAllocEvaluate() {
 
     assert(iter->second.second == -1);
 
-    Buffer const *const cur_buf = _buf[input];
+    Buffer *cur_buf = _buf[input];
     assert(!cur_buf->Empty(vc));
-    assert(cur_buf->GetState(vc) == VC::vc_alloc);
+    // assert(cur_buf->GetState(vc) == VC::vc_alloc);
 
-    Flit const *const f = cur_buf->FrontFlit(vc);
+    Flit *f = cur_buf->FrontFlit(vc);
     assert(f);
     assert(f->vc == vc);
     assert(f->head);
@@ -814,11 +955,47 @@ void PhotonicRouterCredits::_VCAllocEvaluate() {
       int const match_vc = output_and_vc % _vcs;
       assert((match_vc >= 0) && (match_vc < _vcs));
 
-      if (f->vc != 2) {  // Don't update the input map for acks
+      if (f->vc == 1) {  // only update input map for reservations
         _input_map[input] = match_output;
+        if (!(_InitialRouter(f))) {  // Lowest level routers
+          _input_ready[input] = true;
+        }
+        cout << "input " << input << " allocated to output " << match_output << " at " << FullName() 
+        << " Header : " << f->id 
+        << endl;
+        cout << "New status: [";
+        for (int i : _input_map) {
+          cout << i << " ";
+        }
+        cout << "]" << endl;
+
+        if (_FinalRouter(f)) {
+          // generate ack flit
+          cout << "creating ack packet for id " << f->id << " at " << FullName() << endl;
+          Flit *ack_flit = Flit::New();
+          ack_flit->type = Flit::CIRCUIT_ACK;
+          ack_flit->vc = 2;
+          ack_flit->pid = 0;
+          ack_flit->cl = 0;
+          ack_flit->dest = f->src;
+          ack_flit->head = true;
+          ack_flit->tail = true;
+          ack_flit->watch = f->watch;
+          ack_flit->id = f->id;
+          _input_mapped_id[input] = f->id;
+          if (input < gK) {  // If only one router on path
+            _input_ready[input] = true;
+          } else {
+            _output_buffer[input].push(ack_flit);  // Send ack flit
+          }
+        } else {  // Send to output buffer
+          if (_id == 9) {
+            cout << "Input " << input << " Sending flit " << *f << " to output " << match_output << "at router " << FullName() << endl;
+          }
+          _output_buffer[match_output].push(f);
+        }
       }
 
-      cout << "input " << input << " allocated to output " << match_output << " at " << FullName() << endl;
       if (f->watch) {
         *gWatchOut << GetSimTime() << " | " << FullName() << " | "
                    << "Assigning VC " << match_vc
@@ -882,6 +1059,7 @@ void PhotonicRouterCredits::_VCAllocEvaluate() {
       assert(f->head);
 
       if (!dest_buf->IsAvailableFor(match_vc) || (_input_map[input] == -1 && f->vc == 0)) {
+        assert(false);  // Should never get here
         if (f->watch) {
           *gWatchOut << GetSimTime() << " | " << FullName() << " | "
                      << "  Discarding previously generated grant for VC " << vc
@@ -892,6 +1070,7 @@ void PhotonicRouterCredits::_VCAllocEvaluate() {
         }
         iter->second.second = STALL_BUFFER_BUSY;
       } else if (_vc_busy_when_full && dest_buf->IsFullFor(match_vc)) {
+        assert(false);  // Should never get here
         if (f->watch) {
           *gWatchOut << GetSimTime() << " | " << FullName() << " | "
                      << "  Discarding previously generated grant for VC " << vc
@@ -960,13 +1139,11 @@ void PhotonicRouterCredits::_VCAllocUpdate() {
       BufferState *const dest_buf = _next_buf[match_output];
       assert(dest_buf->IsAvailableFor(match_vc));
 
-      dest_buf->TakeBuffer(match_vc, input * _vcs + vc);
+      // No need to set outputs or set state because we don't use them
+      //  dest_buf->TakeBuffer(match_vc, input * _vcs + vc);
 
-      cur_buf->SetOutput(vc, match_output, match_vc);
-      cur_buf->SetState(vc, VC::active);
-      if (!_speculative) {
-        _sw_alloc_vcs.push_back(make_pair(-1, make_pair(item.second.first, -1)));
-      }
+      // cur_buf->SetOutput(vc, match_output, match_vc);
+      // cur_buf->SetState(vc, VC::active);
     } else {
       if (f->watch) {
         *gWatchOut << GetSimTime() << " | " << FullName() << " | "
@@ -1127,7 +1304,6 @@ void PhotonicRouterCredits::_SWHoldUpdate() {
                    << "." << endl;
       }
 
-      
       cur_buf->RemoveFlit(vc);
 
 #ifdef TRACK_FLOWS
@@ -1203,7 +1379,15 @@ void PhotonicRouterCredits::_SWHoldUpdate() {
         _switch_hold_out[expanded_output] = -1;
         if (f->tail) {
           cur_buf->SetState(vc, VC::idle);
-          _input_map[input] = -1;  // Reset the input
+          if (f->vc == 0) {
+            _input_map[input] = -1;  // Reset the input
+            cout << "clearing input " << input << " at router " << FullName()
+                 << "New state: " << endl;
+            for (int i : _input_map) {
+              cout << i << " ";
+            }
+            cout << endl;
+          }
         }
       } else {
         Flit *const nf = cur_buf->FrontFlit(vc);
@@ -2209,7 +2393,7 @@ void PhotonicRouterCredits::_SwitchUpdate() {
     int const input = expanded_input / _input_speedup;
     assert((input >= 0) && (input < _inputs));
     int const expanded_output = item.second.second.second;
-    int const output = expanded_output / _output_speedup;
+    int output = expanded_output / _output_speedup;
     assert((output >= 0) && (output < _outputs));
 
     if (f->watch) {
@@ -2229,9 +2413,8 @@ void PhotonicRouterCredits::_SwitchUpdate() {
                  << " at output " << output
                  << "." << endl;
     }
-
     _output_buffer[output].push(f);
-    cout << "ejecting flit " << *f << endl;
+    cout << "ejecting flit from " << FullName() << *f << endl;
     // the output buffer size isn't precise due to flits in flight
     // but there is a maximum bound based on output speed up and ST traversal
     assert(_output_buffer[output].size() <= (size_t)_output_buffer_size + _crossbar_delay * _output_speedup + (_output_speedup - 1) || _output_buffer_size == -1);
@@ -2263,6 +2446,41 @@ void PhotonicRouterCredits::_OutputQueuing() {
 // write outputs
 //------------------------------------------------------------------------------
 
+void PhotonicRouterCredits::_SendData() {
+  for (int input = 0; input < _inputs; ++input) {
+    int outport = _input_map[input];
+    if (_input_ready[input] && !_flits_to_send[input].empty()) {
+      assert(outport != -1);
+      Flit *const f = _flits_to_send[input].front();
+      assert(f);
+      _flits_to_send[input].pop();
+      if (_FinalRouter(f)) {
+        BufferState *const dest_buf = _next_buf[outport];
+        dest_buf->TakeBuffer(0, 0);
+        dest_buf->SendingFlit(f);
+        cout << GetSimTime() << " | " << FullName() << " | "
+             << " Wrote final output" << endl;
+      }
+      assert(f->vc == 0);
+      cout << "Sending data from router  " << FullName() << endl;
+      if (f->head) {
+        //Output should be allocated for the current head
+        assert(f->id == _input_mapped_id[input]);
+      }
+      if (f->tail) {
+        cout << GetSimTime() << " | " << FullName() << " | "
+             << " Cleared input " << input
+             << " header " << _input_mapped_id[input] 
+             << endl;
+        _input_map[input] = -1;
+        _input_ready[input] = false;
+        _request_sent[input] = false;
+      }
+      _output_channels[outport]->Send(f);
+    }
+  }
+}
+
 void PhotonicRouterCredits::_SendFlits() {
   for (int output = 0; output < _outputs; ++output) {
     if (!_output_buffer[output].empty()) {
@@ -2274,9 +2492,10 @@ void PhotonicRouterCredits::_SendFlits() {
       ++_sent_flits[f->cl][output];
 #endif
 
-      if (f->watch)
+      if (f->watch || _id == 9)
         *gWatchOut << GetSimTime() << " | " << FullName() << " | "
                    << "Sending flit " << f->id
+                   << " vc " << f->vc
                    << " to channel at output " << output
                    << "." << endl;
       if (gTrace) {
@@ -2294,10 +2513,12 @@ void PhotonicRouterCredits::_SendCredits() {
       Credit *const c = _credit_buffer[input].front();
       assert(c);
       _credit_buffer[input].pop();
-      if (!(_lowest_level &&  // Don't send credits for VC 1 downwards at the lowest level
-            c->vc.find(1) != c->vc.end() &&
-            input < _inputs / 2)) {
+      if (_lowest_level &&  // Don't send credits for VC 1 downwards at the lowest level
+          c->vc.find(1) == c->vc.end() &&
+          input >= _inputs / 2 &&  // This could be wrong
+          c->vc.find(2) == c->vc.end()) {
         _input_credits[input]->Send(c);
+        cout << "Sending credits from router " << FullName() << endl;
       }
     }
   }
@@ -2406,6 +2627,22 @@ void PhotonicRouterCredits::_UpdateNOQ(int input, int vc, Flit const *f) {
   }
 }
 
-bool PhotonicRouterCredits::_LowestLevelRouter() {
-  return _lowest_level;
+bool PhotonicRouterCredits::_FinalRouter(Flit const *f) {
+  // This is taken from the fattree nca algorithm
+  int dest = f->dest;
+  int router_id = this->GetID();  // routers are numbered with smallest at the top level
+  int routers_per_level = powi(gK, gN - 1);
+  int pos = router_id % routers_per_level;
+  int router_depth = router_id / routers_per_level;  // which level
+  int routers_per_neighborhood = powi(gK, gN - router_depth - 1);
+  int router_neighborhood = pos / routers_per_neighborhood;  // coverage of this tree
+  int router_coverage = powi(gK, gN - router_depth);         // span of the tree from this router
+
+  bool finalRouter = dest < (router_neighborhood + 1) * router_coverage &&
+                     dest >= router_neighborhood * router_coverage && _lowest_level;
+  return finalRouter;
+}
+
+bool PhotonicRouterCredits::_InitialRouter(Flit const *f) {
+  return _lowest_level && !_FinalRouter(f);
 }
