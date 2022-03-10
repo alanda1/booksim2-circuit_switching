@@ -258,22 +258,37 @@ void photonic_fattree_nca( const Router *r, const Flit *f,
 {
   // cout << "Routing flit" << *f << endl;
   // assert(f->type == Flit::CIRCUT_REQUEST || f->type == -1); //Only circuit requests should be routed
-  int vcBegin = 0, vcEnd = gNumVCs-1;
-  if ( f->type == Flit::READ_REQUEST ) {
-    vcBegin = gReadReqBeginVC;
-    vcEnd = gReadReqEndVC;
-  } else if ( f->type == Flit::WRITE_REQUEST ) {
-    vcBegin = gWriteReqBeginVC;
-    vcEnd = gWriteReqEndVC;
-  } else if ( f->type ==  Flit::READ_REPLY ) {
-    vcBegin = gReadReplyBeginVC;
-    vcEnd = gReadReplyEndVC;
-  } else if ( f->type ==  Flit::WRITE_REPLY ) {
-    vcBegin = gWriteReplyBeginVC;
-    vcEnd = gWriteReplyEndVC;
-  } else if (f->type == Flit::CIRCUT_REQUEST) {
+  // int vcBegin = 0, vcEnd = gNumVCs-1;
+  int vcBegin = 0, vcEnd = 2; //Only data allowed
+  // if ( f->type == Flit::READ_REQUEST ) {
+  //   vcBegin = gReadReqBeginVC;
+  //   vcEnd = gReadReqEndVC;
+  // } else if ( f->type == Flit::WRITE_REQUEST ) {
+  //   vcBegin = gWriteReqBeginVC;
+  //   vcEnd = gWriteReqEndVC;
+  // } else if ( f->type ==  Flit::READ_REPLY ) {
+  //   vcBegin = gReadReplyBeginVC;
+  //   vcEnd = gReadReplyEndVC;
+  // } else if ( f->type ==  Flit::WRITE_REPLY ) {
+  //   vcBegin = gWriteReplyBeginVC;
+  //   vcEnd = gWriteReplyEndVC;
+  // } else if (f->type == Flit::CIRCUT_REQUEST) {
+  //   vcBegin = 1;
+  //   vcEnd = 1;
+  // }
+
+  if (f->type == Flit::CIRCUT_REQUEST) {
     vcBegin = 1;
     vcEnd = 1;
+  } else if (f->type == Flit::CIRCUIT_ACK){
+    vcBegin = 2;
+    vcEnd = 2;
+  }else {
+    vcBegin = 0;
+    vcEnd = 0;
+  }
+  if(!(((f->vc >= vcBegin) && (f->vc <= vcEnd)) || (inject && (f->vc < 0)))){
+    cout << *f << endl;
   }
   assert(((f->vc >= vcBegin) && (f->vc <= vcEnd)) || (inject && (f->vc < 0)));
 

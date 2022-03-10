@@ -156,6 +156,8 @@ class PhotonicRouterCredits : public Router {
   bool _FinalRouter(Flit const * f);
   bool _InitialRouter(Flit const *f);
 
+  void _PrintState ();
+
 
   // ----------------------------------------
   //
@@ -195,7 +197,7 @@ public:
 
   SwitchMonitor const * const GetSwitchMonitor() const {return _switchMonitor;}
   BufferMonitor const * const GetBufferMonitor() const {return _bufferMonitor;}
-
+  // inline int NumOutputs() const {return 1;} //Traffic Manager should only see 1 vc
 };
 
 #endif
