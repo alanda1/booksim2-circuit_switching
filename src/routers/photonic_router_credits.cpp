@@ -704,7 +704,7 @@ void PhotonicRouterCredits::_RouteUpdate() {
     pair<int, pair<int, int> > const &item = _route_vcs.front();
 
     int const time = item.first;
-    if ((time < 0) /*|| (GetSimTime() < time)*/) {
+    if ((time < 0) || (GetSimTime() < time)) {
       break;
     }
     assert(GetSimTime() == time);
