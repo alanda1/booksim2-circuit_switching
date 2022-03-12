@@ -44,11 +44,15 @@ routing_function = min;
 priority = none;
 traffic       = uniform ;
 
-injection_rate =0.2;
+injection_rate =0.02;
 packet_size = 1;
+
+injection_rate_uses_flits = 0;
 
 topology = dragonflynew;
 
 k  = 4;
 n  = 1;
+
+stats_out = stats.m;
 

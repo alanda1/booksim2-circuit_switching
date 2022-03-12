@@ -1,3 +1,4 @@
+BEGIN Configuration File: ../runfiles/ftreeconfig
 // $Id $
 
 // Copyright (c) 2007-2015, Trustees of The Leland Stanford Junior University
@@ -100,4 +101,49 @@ traffic       = bitcomp;
 
 injection_rate = 0.29;
 
-stats_out = stats.m;
+END Configuration File: ../runfiles/ftreeconfig
+Fat Tree
+ k = 4 levels = 3
+ each switch - total radix =  8
+ # of switches = 48
+ # of channels = 256
+ # of nodes ( size of network ) = 64
+WARNING: Possible network deadlock.
+WARNING: Possible network deadlock.
+WARNING: Possible network deadlock.
+Class 0:
+Packet latency average = -nan
+	minimum = nan
+	maximum = -nan
+Network latency average = -nan
+	minimum = nan
+	maximum = -nan
+Slowest packet = -1
+Flit latency average = -nan
+	minimum = nan
+	maximum = -nan
+Slowest flit = -1
+Fragmentation average = -nan
+	minimum = nan
+	maximum = -nan
+Injected packet rate average = 0.032
+	minimum = 0.025 (at node 15)
+	maximum = 0.041 (at node 21)
+Accepted packet rate average = 0
+	minimum = 0 (at node 0)
+	maximum = 0 (at node 0)
+Injected flit rate average = 0.032
+	minimum = 0.025 (at node 15)
+	maximum = 0.041 (at node 21)
+Accepted flit rate average= 0
+	minimum = 0 (at node 0)
+	maximum = 0 (at node 0)
+Injected packet length average = 1
+Accepted packet length average = -nan
+Total in-flight flits = 2112 (0 measured)
+latency change    = nan
+throughput change = nan
+Average latency for class 0 exceeded 500 cycles. Aborting simulation.
+Too many sample periods needed to converge
+Simulation unstable, ending ...
+Total run time 0.128555

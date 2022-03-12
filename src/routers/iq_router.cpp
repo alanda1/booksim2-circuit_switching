@@ -222,6 +222,7 @@ void IQRouter::ReadInputs( )
   bool have_credits = _ReceiveCredits( );
   _active = _active || have_flits || have_credits;
 }
+// RA --> VC --> Output_buffer
 
 void IQRouter::_InternalStep( )
 {
@@ -234,10 +235,22 @@ void IQRouter::_InternalStep( )
 
   if(!_route_vcs.empty())
     _RouteEvaluate( );
+  /*
+  if(!_crossbar_flits.empty())
+    _SwitchEvaluate( );
+  */
+  if(!_route_vcs.empty()) {
+    _RouteUpdate( );
+    activity = activity || !_route_vcs.empty();
+  }
   if(_vc_allocator) {
     _vc_allocator->Clear();
     if(!_vc_alloc_vcs.empty())
       _VCAllocEvaluate( );
+  }
+  if(!_vc_alloc_vcs.empty()) {
+    _VCAllocUpdate( );
+    activity = activity || !_vc_alloc_vcs.empty();
   }
   if(_hold_switch_for_packet) {
     if(!_sw_hold_vcs.empty())
@@ -248,17 +261,6 @@ void IQRouter::_InternalStep( )
     _spec_sw_allocator->Clear();
   if(!_sw_alloc_vcs.empty())
     _SWAllocEvaluate( );
-  if(!_crossbar_flits.empty())
-    _SwitchEvaluate( );
-
-  if(!_route_vcs.empty()) {
-    _RouteUpdate( );
-    activity = activity || !_route_vcs.empty();
-  }
-  if(!_vc_alloc_vcs.empty()) {
-    _VCAllocUpdate( );
-    activity = activity || !_vc_alloc_vcs.empty();
-  }
   if(_hold_switch_for_packet) {
     if(!_sw_hold_vcs.empty()) {
       _SWHoldUpdate( );
@@ -269,10 +271,12 @@ void IQRouter::_InternalStep( )
     _SWAllocUpdate( );
     activity = activity || !_sw_alloc_vcs.empty();
   }
+  /*
   if(!_crossbar_flits.empty()) {
     _SwitchUpdate( );
     activity = activity || !_crossbar_flits.empty();
   }
+  */
 
   _active = activity;
 
@@ -846,7 +850,7 @@ void IQRouter::_VCAllocUpdate( )
     pair<int, pair<pair<int, int>, int> > const & item = _vc_alloc_vcs.front();
 
     int const time = item.first;
-    if((time < 0) || (GetSimTime() < time)) {
+    if((time < 0) /*|| (GetSimTime() < time)*/) {
       break;
     }
     assert(GetSimTime() == time);
@@ -1011,6 +1015,7 @@ void IQRouter::_SWHoldUpdate( )
     pair<int, pair<pair<int, int>, int> > const & item = _sw_hold_vcs.front();
     
     int const time = item.first;
+    
     if(time < 0) {
       break;
     }
@@ -1121,7 +1126,8 @@ void IQRouter::_SWHoldUpdate( )
 
       dest_buf->SendingFlit(f);
 
-      _crossbar_flits.push_back(make_pair(-1, make_pair(f, make_pair(expanded_input, expanded_output))));
+      // _crossbar_flits.push_back(make_pair(-1, make_pair(f, make_pair(expanded_input, expanded_output))));
+      _output_buffer[expanded_output / _output_speedup].push(f);
       
       if(_out_queue_credits.count(input) == 0) {
 	_out_queue_credits.insert(make_pair(input, Credit::New()));
@@ -1840,11 +1846,12 @@ void IQRouter::_SWAllocUpdate( )
     pair<int, pair<pair<int, int>, int> > const & item = _sw_alloc_vcs.front();
 
     int const time = item.first;
-    if((time < 0) || (GetSimTime() < time)) {
+    
+    if((time < 0) /*||(GetSimTime() < time)*/) {
       break;
     }
     assert(GetSimTime() == time);
-
+    
     int const input = item.second.first.first;
     assert((input >= 0) && (input < _inputs));
     int const vc = item.second.first.second;
@@ -2031,7 +2038,8 @@ void IQRouter::_SWAllocUpdate( )
 
       dest_buf->SendingFlit(f);
 
-      _crossbar_flits.push_back(make_pair(-1, make_pair(f, make_pair(expanded_input, expanded_output))));
+      // _crossbar_flits.push_back(make_pair(-1, make_pair(f, make_pair(expanded_input, expanded_output))));
+      _output_buffer[expanded_output / _output_speedup].push(f);
 
       if(_out_queue_credits.count(input) == 0) {
 	_out_queue_credits.insert(make_pair(input, Credit::New()));

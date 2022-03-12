@@ -83,4 +83,6 @@ traffic       = uniform;
 injection_rate = 0.2;
 
 
+stats_out = stats.m;
+
 
